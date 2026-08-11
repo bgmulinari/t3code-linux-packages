@@ -2,7 +2,7 @@
 
 ## APT
 
-Stable and nightly have independent flat metadata releases. A stable setup is:
+Stable and nightly have independent signed repositories. A stable setup is:
 
 ```bash
 curl -fsSL \
@@ -17,9 +17,10 @@ sudo apt install t3code
 
 For nightly, use `t3code-nightly.sources` instead. Do not install both source definitions at once.
 
-The `Packages` index contains all retained versions and both Debian architectures. Each `Filename`
-uses `../UPSTREAM_TAG/PACKAGE.deb`, which resolves from the fixed metadata release to the immutable
-same-tag version release.
+Each channel's `.sources` file contains separate AMD64 and ARM64 stanzas. Their `Packages` indexes
+contain only the matching architecture and retain every mirrored version. Each `Filename` uses
+`../UPSTREAM_TAG/PACKAGE.deb`, which resolves from the architecture-specific metadata release to the
+immutable same-tag version release.
 
 ## DNF/YUM
 
@@ -62,8 +63,8 @@ The output separates deployment targets:
 ```text
 repository/
   apt/
-    stable/                       # signed indexes for release apt-stable
-    nightly/                      # signed indexes for release apt-nightly
+    stable/{amd64,arm64}/         # releases apt-stable-{amd64,arm64}
+    nightly/{amd64,arm64}/        # releases apt-nightly-{amd64,arm64}
   pages/
     rpm/stable/{x86_64,aarch64}/repodata/
     rpm/nightly/{x86_64,aarch64}/repodata/
@@ -75,6 +76,6 @@ repository/
 ```
 
 GitHub Pages is the single bootstrap location for `KEY.gpg` and all `.sources` and `.repo` files.
-The fixed APT releases contain only signed APT indexes. The workflow signs and compresses this
-metadata-only directory into the rolling `repository-state` release. Historical package binaries
-are never copied into that state.
+The four fixed APT releases contain only their signed, architecture-specific indexes. The workflow
+signs and compresses this metadata-only directory into the rolling `repository-state` release.
+Historical package binaries are never copied into that state.

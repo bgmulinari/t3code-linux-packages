@@ -449,7 +449,11 @@ def package_stanzas(path: Path) -> dict[tuple[str, str, str], str]:
         return {}
 
     result: dict[tuple[str, str, str], str] = {}
-    for raw_stanza in re.split(r"\n[ \t]*\n", content):
+    for raw_stanza in re.split(
+        r"\n[ \t]*\n|(?=^Package:[ \t])", content, flags=re.MULTILINE
+    ):
+        if not raw_stanza.strip():
+            continue
         stanza = raw_stanza.strip() + "\n"
         fields: dict[str, str] = {}
         for line in stanza.splitlines():
@@ -469,6 +473,14 @@ def package_stanzas(path: Path) -> dict[tuple[str, str, str], str]:
     return result
 
 
+def write_package_stanzas(
+    stanzas: dict[tuple[str, str, str], str], output: Path
+) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n\n".join(stanzas[key].rstrip() for key in sorted(stanzas))
+    output.write_text(f"{content}\n" if content else "", encoding="utf-8")
+
+
 def merge_apt_command(args: argparse.Namespace) -> None:
     merged = package_stanzas(args.existing) if args.existing else {}
     incoming = package_stanzas(args.incoming)
@@ -478,11 +490,17 @@ def merge_apt_command(args: argparse.Namespace) -> None:
             raise MirrorError(f"Refusing to replace existing APT package metadata: {key}")
         merged[key] = stanza
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        "\n".join(merged[key].rstrip() for key in sorted(merged)) + "\n",
-        encoding="utf-8",
-    )
+    write_package_stanzas(merged, args.output)
+    print(args.output)
+
+
+def extract_apt_architecture_command(args: argparse.Namespace) -> None:
+    selected = {
+        key: stanza
+        for key, stanza in package_stanzas(args.input).items()
+        if key[2] == args.architecture
+    }
+    write_package_stanzas(selected, args.output)
     print(args.output)
 
 
@@ -523,6 +541,17 @@ def create_parser() -> argparse.ArgumentParser:
     merge_apt.add_argument("--incoming", type=Path, required=True)
     merge_apt.add_argument("--output", type=Path, required=True)
     merge_apt.set_defaults(handler=merge_apt_command)
+
+    extract_apt_architecture = subparsers.add_parser(
+        "extract-apt-architecture",
+        help="Extract one architecture from an APT Packages index",
+    )
+    extract_apt_architecture.add_argument("--input", type=Path, required=True)
+    extract_apt_architecture.add_argument(
+        "--architecture", choices=("amd64", "arm64"), required=True
+    )
+    extract_apt_architecture.add_argument("--output", type=Path, required=True)
+    extract_apt_architecture.set_defaults(handler=extract_apt_architecture_command)
 
     return parser
 

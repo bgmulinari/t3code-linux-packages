@@ -51,8 +51,9 @@ expire ordinary release assets; they remain until a maintainer deletes the asset
 repository.
 
 Large package files never enter GitHub Pages. The Pages site contains only RPM `repodata`, all APT
-and DNF configuration files, and the public key. APT metadata lives in the fixed `apt-stable` and
-`apt-nightly` releases. Metadata references packages in immutable version releases.
+and DNF configuration files, and the public key. APT metadata lives in separate fixed releases for
+each channel and Debian architecture, such as `apt-stable-amd64` and `apt-nightly-arm64`. Metadata
+references packages in immutable version releases.
 
 The fixed `repository-state` release contains a signed compressed snapshot of metadata only. A run
 verifies that snapshot, merges one new version, and replaces the snapshot. This retains every

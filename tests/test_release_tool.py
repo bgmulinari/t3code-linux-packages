@@ -235,6 +235,34 @@ class ReleaseToolTests(unittest.TestCase):
                     argparse.Namespace(existing=existing, incoming=incoming, output=root / "out")
                 )
 
+    def test_extracts_apt_architectures_into_independent_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            combined = root / "Packages"
+            combined.write_text(
+                "Package: t3code\nVersion: 1.0.0-1\nArchitecture: amd64\n"
+                "Filename: ../v1.0.0/t3code-amd64.deb\nSHA256: aaa\n"
+                "Package: t3code\nVersion: 1.0.0-1\nArchitecture: arm64\n"
+                "Filename: ../v1.0.0/t3code-arm64.deb\nSHA256: bbb\n",
+                encoding="utf-8",
+            )
+
+            amd64 = root / "amd64" / "Packages"
+            arm64 = root / "arm64" / "Packages"
+            for architecture, output in (("amd64", amd64), ("arm64", arm64)):
+                release_tool.extract_apt_architecture_command(
+                    argparse.Namespace(
+                        input=combined,
+                        architecture=architecture,
+                        output=output,
+                    )
+                )
+
+            self.assertIn("Architecture: amd64", amd64.read_text(encoding="utf-8"))
+            self.assertNotIn("Architecture: arm64", amd64.read_text(encoding="utf-8"))
+            self.assertIn("Architecture: arm64", arm64.read_text(encoding="utf-8"))
+            self.assertNotIn("Architecture: amd64", arm64.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

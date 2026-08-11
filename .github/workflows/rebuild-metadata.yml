@@ -1,0 +1,173 @@
+name: Rebuild package repository metadata
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-t3code-releases
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    name: Rebuild and sign retained metadata
+    if: github.repository == 'bgmulinari/t3code-linux-packages'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    environment: package-signing
+    steps:
+      - name: Check out mirror tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install repository tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c dpkg-dev rpm
+
+      - id: signing-key
+        name: Import package signing key
+        env:
+          PACKAGE_SIGNING_PRIVATE_KEY: ${{ secrets.PACKAGE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$PACKAGE_SIGNING_PRIVATE_KEY"
+          printf '%s\n' "$PACKAGE_SIGNING_PRIVATE_KEY" | gpg --batch --import
+          fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys \
+              | awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test -n "$fingerprint"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify retained repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir state-download state-existing
+          gh release download repository-state \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'repository-metadata.tar.gz*' \
+            --dir state-download
+          test -f state-download/repository-metadata.tar.gz
+          test -f state-download/repository-metadata.tar.gz.asc
+          gpg --batch --verify \
+            state-download/repository-metadata.tar.gz.asc \
+            state-download/repository-metadata.tar.gz
+          tar -xzf state-download/repository-metadata.tar.gz -C state-existing
+          test -d state-existing/repository
+
+      - name: Rebuild retained metadata
+        env:
+          SIGNING_KEY: ${{ steps.signing-key.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          scripts/build-package-repositories.sh \
+            --metadata-only \
+            --existing state-existing/repository \
+            --output repository \
+            --release-repository "$GITHUB_REPOSITORY" \
+            --metadata-base-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/$repository_name" \
+            --signing-key "$SIGNING_KEY"
+
+          mkdir state-assets
+          tar -czf state-assets/repository-metadata.tar.gz repository
+          gpg --batch --yes --default-key "$SIGNING_KEY" --armor --detach-sign \
+            --output state-assets/repository-metadata.tar.gz.asc \
+            state-assets/repository-metadata.tar.gz
+
+      - name: Upload rebuilt metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rebuilt-repository-metadata
+          path: |
+            repository
+            state-assets
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Deploy rebuilt metadata
+    needs: rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - name: Download rebuilt metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: rebuilt-repository-metadata
+          path: deployment
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload GitHub Pages metadata
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: deployment/repository/pages
+          retention-days: 1
+
+      - id: pages
+        name: Deploy repository metadata to GitHub Pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Publish architecture-specific APT metadata releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for channel in stable nightly; do
+            for architecture in amd64 arm64; do
+              apt_directory="deployment/repository/apt/$channel/$architecture"
+              test -f "$apt_directory/InRelease"
+              release_tag="apt-$channel-$architecture"
+              if ! gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                gh release create "$release_tag" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --target "$GITHUB_SHA" \
+                  --title "T3 Code $channel APT metadata ($architecture)" \
+                  --notes "Signed rolling APT metadata for $architecture. Package files remain in immutable version releases." \
+                  --prerelease
+              fi
+              gh release upload "$release_tag" "$apt_directory"/* \
+                --repo "$GITHUB_REPOSITORY" \
+                --clobber
+            done
+          done
+
+      - name: Publish signed repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload repository-state deployment/state-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Delete temporary workflow artifacts
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[].id' \
+            | while read -r artifact_id; do
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+              done
