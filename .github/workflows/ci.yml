@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test mirror tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out mirror
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Run checks
+        run: make test
+
+  patch:
+    name: Check packaging patch (${{ matrix.ref }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ref:
+          - v0.0.33
+          - v0.0.34-nightly.20260810.1062
+    steps:
+      - name: Check out mirror
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: mirror
+
+      - name: Check out upstream tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: pingdotgg/t3code
+          ref: ${{ matrix.ref }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Verify patch application
+        run: git -C upstream apply --check "$GITHUB_WORKSPACE/mirror/patches/t3code-native-packaging.patch"

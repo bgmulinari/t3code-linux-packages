@@ -1,0 +1,44 @@
+[
+  {
+    "tag_name": "v0.0.34",
+    "published_at": "2026-08-11T12:00:00Z",
+    "prerelease": false,
+    "draft": false,
+    "resolved_commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  {
+    "tag_name": "v0.0.34-nightly.20260811.1063",
+    "published_at": "2026-08-11T03:00:00Z",
+    "prerelease": true,
+    "draft": false,
+    "resolved_commit": "dddddddddddddddddddddddddddddddddddddddd"
+  },
+  {
+    "tag_name": "v0.0.34-nightly.20260810.1062",
+    "published_at": "2026-08-10T21:35:39Z",
+    "prerelease": true,
+    "draft": false,
+    "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  {
+    "tag_name": "v0.0.33",
+    "published_at": "2026-08-10T11:59:22Z",
+    "prerelease": false,
+    "draft": false,
+    "resolved_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  {
+    "tag_name": "v0.0.32",
+    "published_at": "2026-08-01T12:00:00Z",
+    "prerelease": false,
+    "draft": false,
+    "resolved_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  {
+    "tag_name": "v99.0.0-nightly.20990101.1",
+    "published_at": "2099-01-01T00:00:00Z",
+    "prerelease": true,
+    "draft": true,
+    "resolved_commit": "ffffffffffffffffffffffffffffffffffffffff"
+  }
+]

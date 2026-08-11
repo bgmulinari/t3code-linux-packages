@@ -1,0 +1,451 @@
+name: Mirror T3 Code releases
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Optional eligible upstream tag to build
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-t3code-releases
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover the next upstream release
+    if: github.repository == 'bgmulinari/t3code-linux-packages'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      has_releases: ${{ steps.discover.outputs.has_releases }}
+      count: ${{ steps.discover.outputs.count }}
+      release_matrix: ${{ steps.discover.outputs.release_matrix }}
+      build_matrix: ${{ steps.discover.outputs.build_matrix }}
+    steps:
+      - name: Check out mirror
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - id: discover
+        name: Compare upstream and mirror releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          args=(
+            --config config/mirror.json
+            --downstream-repository "$GITHUB_REPOSITORY"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            args+=(--tag "$REQUESTED_TAG")
+          fi
+          python3 scripts/release_tool.py discover "${args[@]}"
+
+  build:
+    name: Build ${{ matrix.tag }} (${{ matrix.arch }})
+    needs: discover
+    if: needs.discover.outputs.has_releases == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.discover.outputs.build_matrix) }}
+    steps:
+      - name: Check out mirror
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: mirror
+
+      - name: Check out immutable upstream commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: pingdotgg/t3code
+          ref: ${{ matrix.commit }}
+          path: source
+          persist-credentials: false
+
+      - name: Verify upstream checkout
+        env:
+          EXPECTED_COMMIT: ${{ matrix.commit }}
+        run: test "$(git -C source rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          working-directory: source
+          version-file: package.json
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop...
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Linux packaging tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev imagemagick libcrypt1 rpm
+          rpmbuild --version
+
+      - name: Build Debian and RPM packages
+        run: |
+          mirror/scripts/build-upstream-packages.sh \
+            --source source \
+            --patch mirror/patches/t3code-native-packaging.patch \
+            --output out \
+            --version "${{ matrix.version }}" \
+            --arch "${{ matrix.arch }}" \
+            --commit "${{ matrix.commit }}"
+
+      - name: Validate unsigned packages
+        run: |
+          mirror/scripts/validate-packages.sh \
+            --directory out \
+            --deb-arch "${{ matrix.deb_arch }}" \
+            --rpm-arch "${{ matrix.rpm_arch }}"
+
+      - name: Enforce the free artifact budget
+        run: |
+          set -euo pipefail
+          package_bytes="$(du -sb out | cut -f1)"
+          if ((package_bytes > 240000000)); then
+            echo "Package pair is too large for the two-architecture free-tier budget: $package_bytes bytes" >&2
+            exit 1
+          fi
+
+      - name: Upload unsigned packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unsigned-${{ matrix.tag }}-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Sign and publish ${{ matrix.tag }}
+    needs:
+      - discover
+      - build
+    if: needs.discover.outputs.has_releases == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    environment: package-signing
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.release_matrix) }}
+    steps:
+      - name: Check out mirror tooling only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: mirror
+
+      - name: Download both architecture builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: unsigned-${{ matrix.tag }}-*
+          path: packages
+          merge-multiple: true
+
+      - name: Install package and repository tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y apt-utils createrepo-c dpkg-dev rpm
+
+      - id: signing-key
+        name: Import package signing key
+        env:
+          PACKAGE_SIGNING_PRIVATE_KEY: ${{ secrets.PACKAGE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$PACKAGE_SIGNING_PRIVATE_KEY"
+          printf '%s\n' "$PACKAGE_SIGNING_PRIVATE_KEY" | gpg --batch --import
+          fingerprint="$(
+            gpg --batch --with-colons --list-secret-keys \
+              | awk -F: '$1 == "fpr" { print $10; exit }'
+          )"
+          test -n "$fingerprint"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+          public_key="$RUNNER_TEMP/package-signing-key.asc"
+          gpg --batch --armor --export "$fingerprint" > "$public_key"
+          rpm --import "$public_key"
+
+          printf '%s\n' \
+            '%_signature gpg' \
+            "%_gpg_name $fingerprint" \
+            '%__gpg /usr/bin/gpg' \
+            '%__gpg_sign_cmd %{__gpg} gpg --batch --no-verbose --no-armor --no-secmem-warning -u "%{_gpg_name}" -sbo %{__signature_filename} %{__plaintext_filename}' \
+            > "$HOME/.rpmmacros"
+
+      - name: Sign both RPMs
+        run: |
+          set -euo pipefail
+          mapfile -d '' rpm_files < <(find packages -maxdepth 1 -type f -name '*.rpm' -print0)
+          test "${#rpm_files[@]}" -eq 2
+          for rpm_file in "${rpm_files[@]}"; do
+            rpmsign --addsign "$rpm_file"
+          done
+
+      - name: Validate signed packages
+        run: |
+          mirror/scripts/validate-packages.sh \
+            --directory packages \
+            --deb-arch amd64 \
+            --deb-arch arm64 \
+            --rpm-arch x86_64 \
+            --rpm-arch aarch64 \
+            --require-rpm-signature
+
+      - name: Create checksums and provenance manifest
+        run: |
+          set -euo pipefail
+          (
+            cd packages
+            sha256sum -- *.deb *.rpm > SHA256SUMS
+          )
+          python3 mirror/scripts/release_tool.py manifest \
+            --tag "${{ matrix.tag }}" \
+            --commit "${{ matrix.commit }}" \
+            --published-at "${{ matrix.published_at }}" \
+            --version "${{ matrix.version }}" \
+            --channel "${{ matrix.channel }}" \
+            --arch x64 \
+            --arch arm64 \
+            --artifacts packages \
+            --output packages/manifest.json
+
+      - name: Download and verify retained repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p state-download state-existing
+          if gh release view repository-state --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download repository-state \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern 'repository-metadata.tar.gz*' \
+              --dir state-download
+            test -f state-download/repository-metadata.tar.gz
+            test -f state-download/repository-metadata.tar.gz.asc
+            gpg --batch --verify \
+              state-download/repository-metadata.tar.gz.asc \
+              state-download/repository-metadata.tar.gz
+            tar -xzf state-download/repository-metadata.tar.gz -C state-existing
+            test -d state-existing/repository
+          else
+            existing_version_tag="$(
+              gh api \
+                --paginate \
+                "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '.[].tag_name' \
+                | grep -E '^(nightly-)?v?[0-9]+\.[0-9]+\.[0-9]+' \
+                | head -n 1 \
+                || true
+            )"
+            if [[ -n "$existing_version_tag" ]]; then
+              echo "Repository state is missing even though $existing_version_tag is already published." >&2
+              echo "Rerun the failed metadata deployment instead of rebuilding history." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Update retained APT and RPM metadata
+        env:
+          SIGNING_KEY: ${{ steps.signing-key.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          args=(
+            --packages packages
+            --tag "${{ matrix.tag }}"
+            --channel "${{ matrix.channel }}"
+            --output repository
+            --release-repository "$GITHUB_REPOSITORY"
+            --metadata-base-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/$repository_name"
+            --signing-key "$SIGNING_KEY"
+          )
+          if [[ -d state-existing/repository ]]; then
+            args+=(--existing state-existing/repository)
+          fi
+          mirror/scripts/build-package-repositories.sh "${args[@]}"
+
+          mkdir -p state-assets
+          tar -czf state-assets/repository-metadata.tar.gz repository
+          gpg --batch --yes --default-key "$SIGNING_KEY" --armor --detach-sign \
+            --output state-assets/repository-metadata.tar.gz.asc \
+            state-assets/repository-metadata.tar.gz
+
+      - name: Upload deployable metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: repository-metadata-${{ matrix.tag }}
+          path: |
+            repository
+            state-assets
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Write release notes
+        env:
+          UPSTREAM_TAG: ${{ matrix.tag }}
+          UPSTREAM_COMMIT: ${{ matrix.commit }}
+          PACKAGE_CHANNEL: ${{ matrix.channel }}
+        run: |
+          printf '%s\n' \
+            "Unofficial automated T3 Code Linux packages for x86-64 and ARM64." \
+            "" \
+            "- Upstream release: https://github.com/pingdotgg/t3code/releases/tag/$UPSTREAM_TAG" \
+            "- Upstream commit: \`$UPSTREAM_COMMIT\`" \
+            "- Channel: \`$PACKAGE_CHANNEL\`" \
+            "- Packaging proposal: https://github.com/pingdotgg/t3code/pull/5139" \
+            > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Publish immutable mirror release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ matrix.tag }}
+          RELEASE_VERSION: ${{ matrix.version }}
+          RELEASE_CHANNEL: ${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing mirror release: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          args=(
+            "$RELEASE_TAG"
+            packages/*.deb
+            packages/*.rpm
+            packages/SHA256SUMS
+            packages/manifest.json
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "T3 Code $RELEASE_VERSION Linux packages"
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+          )
+          if [[ "$RELEASE_CHANNEL" == nightly ]]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh release create "${args[@]}"
+
+  deploy:
+    name: Deploy signed repository metadata
+    needs:
+      - discover
+      - publish
+    if: needs.discover.outputs.has_releases == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: write
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.release_matrix) }}
+    steps:
+      - name: Download signed repository metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: repository-metadata-${{ matrix.tag }}
+          path: deployment
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload GitHub Pages metadata
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: deployment/repository/pages
+          retention-days: 1
+
+      - id: pages
+        name: Deploy RPM metadata to GitHub Pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+      - name: Publish flat APT metadata releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for channel in stable nightly; do
+            apt_directory="deployment/repository/apt/$channel"
+            if [[ ! -f "$apt_directory/InRelease" ]]; then
+              continue
+            fi
+            release_tag="apt-$channel"
+            if ! gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release create "$release_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" \
+                --title "T3 Code $channel APT metadata" \
+                --notes "Signed rolling APT metadata. Package files remain in immutable version releases." \
+                --prerelease
+            fi
+            gh release upload "$release_tag" "$apt_directory"/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          done
+
+      - name: Publish signed repository state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag=repository-state
+          if ! gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "T3 Code package repository state" \
+              --notes "Signed rolling metadata state used by the automated publisher." \
+              --prerelease
+          fi
+          gh release upload "$release_tag" deployment/state-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Delete temporary workflow artifacts
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[].id' \
+            | while read -r artifact_id; do
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+              done

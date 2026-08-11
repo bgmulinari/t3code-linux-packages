@@ -1,0 +1,157 @@
+diff --git a/scripts/build-desktop-artifact.ts b/scripts/build-desktop-artifact.ts
+--- a/scripts/build-desktop-artifact.ts
++++ b/scripts/build-desktop-artifact.ts
+@@ -132,6 +132,34 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
+   },
+ };
+ 
++const DEB_DEPENDENCIES = [
++  "libgtk-3-0",
++  "libnotify4",
++  "libnss3",
++  "libxss1",
++  "libxtst6",
++  "xdg-utils",
++  "libatspi2.0-0",
++  "libuuid1",
++  "libsecret-1-0",
++  "libasound2t64 | libasound2",
++  "libgbm1",
++] as const;
++
++const RPM_DEPENDENCIES = [
++  "gtk3",
++  "libnotify",
++  "nss",
++  "libXScrnSaver",
++  "(libXtst or libXtst6)",
++  "xdg-utils",
++  "at-spi2-core",
++  "(libuuid or libuuid1)",
++  "alsa-lib",
++  "libsecret",
++  "mesa-libgbm",
++] as const;
++
+ interface BuildCliInput {
+   readonly platform: Option.Option<typeof BuildPlatform.Type>;
+   readonly target: Option.Option<string>;
+@@ -617,6 +645,9 @@ interface StagePackageJson {
+   readonly packageManager: string;
+   readonly description: string;
+   readonly author: string;
++  readonly homepage: string;
++  readonly license: string;
++  readonly desktopName: string;
+   readonly main: string;
+   readonly build: Record<string, unknown>;
+   readonly dependencies: Record<string, unknown>;
+@@ -643,6 +674,10 @@ export const WINDOWS_ASAR_UNPACK = ["apps/server/dist/**", "**/node_modules/**"] as const;
+ export const DESKTOP_EXTRA_RESOURCES = [
++  {
++    from: "LICENSE",
++    to: "LICENSE.t3code",
++  },
+   {
+     from: "apps/desktop/prod-resources/resource-monitor",
+     to: "resource-monitor",
+   },
+ ] as const;
+@@ -1521,6 +1552,23 @@ export function resolveDesktopProductName(version: string): string {
+     : (desktopPackageJson.productName ?? "T3 Code");
+ }
+ 
++/**
++ * Splits a comma-separated Linux target string, for example "AppImage,deb,rpm",
++ * so one electron-builder run emits every package from the same staged app.
++ *
++ * The alternative — one release-matrix entry per format — collides on the
++ * upload artifact name (`desktop-${platform}-${arch}` is identical for two
++ * entries that differ only by target), which is what sank #1655. artifactName's
++ * ${ext} already keeps the output files apart, so a single run needs no extra
++ * runner and no extra release wall-clock.
++ */
++export function resolveLinuxTargets(target: string): ReadonlyArray<string> {
++  return target
++    .split(",")
++    .map((entry) => entry.trim())
++    .filter((entry) => entry.length > 0);
++}
++
+ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+   platform: typeof BuildPlatform.Type,
+   target: string,
+@@ -1584,11 +1632,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+   }
+ 
+   if (platform === "linux") {
++    const linuxTargets = resolveLinuxTargets(target);
+     buildConfig.linux = {
+-      target: [target],
++      target: linuxTargets,
+       executableName: "t3code",
+       icon: "icons",
+       category: "Development",
++      maintainer: "T3 Tools <support@t3.gg>",
++      vendor: "T3 Tools",
++      synopsis: "A desktop GUI for AI coding agents",
++      syncDesktopName: true,
+       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
+       // in the .desktop entry (Exec already gets %U), so browsers can hand
+       // t3code:// OAuth callbacks to the app.
+@@ -1604,6 +1657,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+         },
+       },
+     };
++
++    if (linuxTargets.includes("deb")) {
++      buildConfig.deb = {
++        depends: [...DEB_DEPENDENCIES],
++      };
++    }
++
++    if (linuxTargets.includes("rpm")) {
++      buildConfig.rpm = {
++        depends: [...RPM_DEPENDENCIES],
++      };
++    }
+   }
+ 
+   if (platform === "win") {
+@@ -1918,8 +1983,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+     t3codeCommitHash: commitHash,
+     private: true,
+     packageManager: rootPackageJson.packageManager,
+-    description: "T3 Code desktop build",
+-    author: "T3 Tools",
++    description: "A desktop GUI for AI coding agents such as Codex, Claude, Cursor, and OpenCode.",
++    author: "T3 Tools <support@t3.gg>",
++    homepage: "https://github.com/pingdotgg/t3code",
++    license: "MIT",
++    desktopName: "t3code.desktop",
+     main: "apps/desktop/dist-electron/main.cjs",
+     build: yield* createBuildConfig(
+       options.platform,
+@@ -1942,6 +2010,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+     },
+   };
+ 
++  yield* fs.copyFile(path.join(repoRoot, "LICENSE"), path.join(stageAppDir, "LICENSE"));
+   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
+   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
+   const stageWorkspaceConfig = createStageWorkspaceConfig({
+diff --git a/scripts/build-desktop-artifact.test.ts b/scripts/build-desktop-artifact.test.ts
+--- a/scripts/build-desktop-artifact.test.ts
++++ b/scripts/build-desktop-artifact.test.ts
+@@ -554,6 +554,10 @@ describe("build-desktop-artifact", () => {
+ 
+-  it("stages the resource monitor as an external executable resource", () => {
++  it("stages the license notice and resource monitor as external resources", () => {
+     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
++      {
++        from: "LICENSE",
++        to: "LICENSE.t3code",
++      },
+       {
+         from: "apps/desktop/prod-resources/resource-monitor",
+         to: "resource-monitor",
