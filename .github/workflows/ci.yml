@@ -39,12 +39,15 @@ jobs:
           path: mirror
 
       - name: Check out upstream tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: pingdotgg/t3code
-          ref: ${{ matrix.ref }}
-          path: upstream
-          persist-credentials: false
+        env:
+          UPSTREAM_REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          mkdir upstream
+          git -C upstream init
+          git -C upstream remote add origin https://github.com/pingdotgg/t3code.git
+          git -C upstream fetch --depth=1 origin "refs/tags/$UPSTREAM_REF"
+          git -C upstream checkout --detach FETCH_HEAD
 
       - name: Verify patch application
         run: git -C upstream apply --check "$GITHUB_WORKSPACE/mirror/patches/t3code-native-packaging.patch"

@@ -68,12 +68,15 @@ jobs:
           path: mirror
 
       - name: Check out immutable upstream commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: pingdotgg/t3code
-          ref: ${{ matrix.commit }}
-          path: source
-          persist-credentials: false
+        env:
+          UPSTREAM_TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          mkdir source
+          git -C source init
+          git -C source remote add origin https://github.com/pingdotgg/t3code.git
+          git -C source fetch --depth=1 origin "refs/tags/$UPSTREAM_TAG"
+          git -C source checkout --detach FETCH_HEAD
 
       - name: Verify upstream checkout
         env:

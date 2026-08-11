@@ -73,6 +73,19 @@ class ReleaseToolTests(unittest.TestCase):
             "if: github.repository == 'bgmulinari/t3code-linux-packages'", workflow
         )
 
+    def test_upstream_checkouts_avoid_broken_submodule_cleanup(self) -> None:
+        workflows = "\n".join(
+            (REPOSITORY_ROOT / workflow_path).read_text(encoding="utf-8")
+            for workflow_path in (
+                ".github/workflows/ci.yml",
+                ".github/workflows/mirror.yml",
+            )
+        )
+        self.assertNotIn("repository: pingdotgg/t3code", workflows)
+        self.assertIn("https://github.com/pingdotgg/t3code.git", workflows)
+        self.assertIn("git -C upstream checkout --detach FETCH_HEAD", workflows)
+        self.assertIn("git -C source checkout --detach FETCH_HEAD", workflows)
+
     def test_discovery_emits_one_release_and_two_builds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             github_output = Path(temporary_directory) / "github-output"
