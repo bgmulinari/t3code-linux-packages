@@ -187,6 +187,10 @@ for rpm_file in "${rpm_files[@]}"; do
   rpm -qlp "$rpm_file" | grep -E '/opt/.+/t3code$' >/dev/null
   rpm -qlp "$rpm_file" | grep -E '/usr/share/applications/.+\.desktop$' >/dev/null
   rpm -qlp "$rpm_file" | grep -E '/opt/.+/resources/LICENSE\.t3code$' >/dev/null
+  if rpm -qlp "$rpm_file" | grep -Eq '^/usr/lib/\.build-id(/|$)'; then
+    echo "RPM package contains global build-ID links: $rpm_file" >&2
+    exit 1
+  fi
   if [[ "$require_rpm_signature" == true ]]; then
     rpm --checksig --verbose "$rpm_file" | grep -Eiq 'signature.*OK|digests signatures OK'
   fi
