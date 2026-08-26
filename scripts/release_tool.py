@@ -18,7 +18,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+STABLE_TAG_PATTERN = re.compile(r"^v(?P<version>\d+\.\d+\.\d+)$")
+NIGHTLY_TAG_PATTERN = re.compile(
+    r"^(?:nightly-)?v(?P<version>\d+\.\d+\.\d+-nightly\.\d{8}\.\d+)$"
+)
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -93,18 +96,33 @@ def load_config(path: Path) -> dict[str, Any]:
     return config
 
 
+def parse_supported_tag(tag: str) -> tuple[str, str]:
+    for channel, pattern in (
+        ("stable", STABLE_TAG_PATTERN),
+        ("nightly", NIGHTLY_TAG_PATTERN),
+    ):
+        match = pattern.fullmatch(tag)
+        if match:
+            return channel, match.group("version")
+    raise MirrorError(f"Unsupported upstream release tag: {tag}")
+
+
 def classify_tag(tag: str) -> str:
-    return "nightly" if "nightly" in tag.lower() else "stable"
+    channel, _ = parse_supported_tag(tag)
+    return channel
 
 
 def tag_to_version(tag: str) -> str:
-    value = tag.strip()
-    if value.startswith("nightly-"):
-        value = value.removeprefix("nightly-")
-    value = value.removeprefix("v")
-    if not SEMVER_PATTERN.fullmatch(value):
-        raise MirrorError(f"Unsupported upstream release tag: {tag}")
-    return value
+    _, version = parse_supported_tag(tag)
+    return version
+
+
+def is_supported_tag(tag: str) -> bool:
+    try:
+        tag_to_version(tag)
+    except MirrorError:
+        return False
+    return True
 
 
 def parse_timestamp(value: str) -> dt.datetime:
@@ -185,6 +203,7 @@ def eligible_releases(
         for release in upstream_releases
         if not release.get("draft")
         and isinstance(release.get("tag_name"), str)
+        and is_supported_tag(release["tag_name"])
         and isinstance(release.get("published_at"), str)
     ]
 

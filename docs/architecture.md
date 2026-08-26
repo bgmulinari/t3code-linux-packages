@@ -16,7 +16,9 @@ upstream change cannot silently produce a differently patched package.
 
 ## Channels and architectures
 
-Tags containing `nightly` enter the nightly channel; other published releases enter stable. Each
+Published `vMAJOR.MINOR.PATCH` tags enter the stable channel. Dated
+`vMAJOR.MINOR.PATCH-nightly.YYYYMMDD.RUN` tags enter nightly. Other tags, including rolling or
+semver-like preview tags such as `desktop-preview` and `v0.0.35-desktop-preview`, are ignored. Each
 channel has an explicit first tag in `config/mirror.json`, so earlier history is not backfilled by
 accident.
 

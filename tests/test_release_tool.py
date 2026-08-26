@@ -38,10 +38,47 @@ class ReleaseToolTests(unittest.TestCase):
         )
         with self.assertRaises(release_tool.MirrorError):
             release_tool.tag_to_version("release/current")
+        with self.assertRaises(release_tool.MirrorError):
+            release_tool.tag_to_version("v0.0.35-desktop-preview")
+        with self.assertRaises(release_tool.MirrorError):
+            release_tool.tag_to_version("0.0.35")
 
     def test_selects_every_unseen_release_from_channel_boundaries(self) -> None:
         candidates = release_tool.select_candidates(
             self.upstream,
+            self.downstream,
+            self.config,
+            limit=10,
+            requested_tag=None,
+            commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
+        )
+        self.assertEqual(
+            [candidate.tag for candidate in candidates],
+            [
+                "v0.0.34-nightly.20260810.1062",
+                "v0.0.34-nightly.20260811.1063",
+                "v0.0.34",
+            ],
+        )
+
+    def test_ignores_unrelated_upstream_release_tags(self) -> None:
+        upstream = [
+            *self.upstream,
+            {
+                "tag_name": "desktop-preview",
+                "draft": False,
+                "prerelease": True,
+                "published_at": "2026-08-10T17:00:00Z",
+            },
+            {
+                "tag_name": "v0.0.34-desktop-preview",
+                "draft": False,
+                "prerelease": True,
+                "published_at": "2026-08-10T18:00:00Z",
+            },
+        ]
+        candidates = release_tool.select_candidates(
+            upstream,
             self.downstream,
             self.config,
             limit=10,
