@@ -125,15 +125,6 @@ jobs:
             --deb-arch "${{ matrix.deb_arch }}" \
             --rpm-arch "${{ matrix.rpm_arch }}"
 
-      - name: Enforce the free artifact budget
-        run: |
-          set -euo pipefail
-          package_bytes="$(du -sb out | cut -f1)"
-          if ((package_bytes > 240000000)); then
-            echo "Package pair is too large for the two-architecture free-tier budget: $package_bytes bytes" >&2
-            exit 1
-          fi
-
       - name: Upload unsigned packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

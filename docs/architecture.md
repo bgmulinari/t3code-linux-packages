@@ -61,9 +61,9 @@ The fixed `repository-state` release contains a signed compressed snapshot of me
 verifies that snapshot, merges one new version, and replaces the snapshot. This retains every
 package entry without redownloading the package archive or exceeding runner disk limits.
 
-Actions artifacts are transport only: one day of retention on failure and explicit deletion after a
-successful deployment. The configuration hard-limits discovery to one release per run and rejects a
-build pair larger than 240 MB per architecture.
+Actions artifacts are transport only. Standard GitHub-hosted runner usage is free for this public
+repository; artifacts have one day of retention on failure and are explicitly deleted after a
+successful deployment. The configuration hard-limits discovery to one release per run.
 
 ## Failure behavior
 
