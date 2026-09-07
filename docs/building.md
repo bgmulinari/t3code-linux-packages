@@ -6,6 +6,7 @@ The GitHub workflow uses the same core toolchain family as upstream T3 Code rele
 - Vite+ and the Node.js version declared by the selected upstream tag
 - Rust with `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`
 - ImageMagick
+- `libsecret-1-dev` and `pkg-config` to compile upstream's browser secret helper
 - `libcrypt.so.1` compatibility required by Electron Builder's bundled FPM Ruby
 - RPM and Debian packaging tools
 
