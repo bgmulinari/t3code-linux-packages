@@ -31,7 +31,6 @@ resulting source build has the same public T3 Connect identifiers as official re
 the desktop update repository to `pingdotgg/t3code`. Native packages remain package-manager updated
 because T3 Code disables the AppImage updater when `APPIMAGE` is absent.
 
-The patch based on [PR #5139](https://github.com/pingdotgg/t3code/pull/5139) by
-[`@bigpod98`](https://github.com/bigpod98) asks Electron Builder to emit Debian and RPM packages in
+The packaging patch asks Electron Builder to emit Debian and RPM packages in
 one invocation, avoiding a second desktop application build for the other package format. It also
 copies T3 Code's upstream MIT license into every generated package.

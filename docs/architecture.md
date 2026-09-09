@@ -3,14 +3,13 @@
 ## Sources of truth
 
 - Application source and release tags: `pingdotgg/t3code`.
-- Temporary native-package implementation: the local patch derived from
-  [PR #5139](https://github.com/pingdotgg/t3code/pull/5139) by
-  [`@bigpod98`](https://github.com/bigpod98).
+- Native-package implementation: the local patch in `patches/`, originally derived from a closed
+  upstream pull request (see the README).
 - Mirror completion ledger and permanent package archive: immutable GitHub Releases in this
   repository.
 - Package repository state: signed, incrementally retained APT and RPM metadata.
 
-The contributor fork behind PR 5139 is never used as a moving build source. Its work is carried as a
+No contributor fork is used as a moving build source. The packaging work is carried as a
 reviewable patch and applied to an official upstream tag. A patch conflict stops the build so an
 upstream change cannot silently produce a differently patched package.
 
@@ -64,6 +63,19 @@ package entry without redownloading the package archive or exceeding runner disk
 Actions artifacts are transport only. Standard GitHub-hosted runner usage is free for this public
 repository; artifacts have one day of retention on failure and are explicitly deleted after a
 successful deployment. The configuration hard-limits discovery to one release per run.
+
+## Discovery order
+
+Scheduled runs are delivered by GitHub far less often than the hourly cron requests, and upstream
+publishes several nightlies a day, so a run cannot afford to work through history in order.
+Discovery therefore prioritizes:
+
+1. Every unmirrored stable release, newest first.
+2. The single newest unmirrored nightly, and only if it is newer than every nightly already
+   mirrored.
+
+Nightlies that were superseded before a run could build them are skipped permanently. A manual
+`workflow_dispatch` with an explicit tag bypasses the skip and can still build any eligible tag.
 
 ## Failure behavior
 

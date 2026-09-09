@@ -43,7 +43,7 @@ class ReleaseToolTests(unittest.TestCase):
         with self.assertRaises(release_tool.MirrorError):
             release_tool.tag_to_version("0.0.35")
 
-    def test_selects_every_unseen_release_from_channel_boundaries(self) -> None:
+    def test_prefers_stable_and_skips_superseded_nightlies(self) -> None:
         candidates = release_tool.select_candidates(
             self.upstream,
             self.downstream,
@@ -54,11 +54,65 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertEqual(
             [candidate.tag for candidate in candidates],
-            [
-                "v0.0.34-nightly.20260810.1062",
-                "v0.0.34-nightly.20260811.1063",
-                "v0.0.34",
-            ],
+            ["v0.0.34", "v0.0.34-nightly.20260811.1063"],
+        )
+
+    def test_newest_stable_comes_before_older_pending_stable(self) -> None:
+        upstream = [
+            *self.upstream,
+            {
+                "tag_name": "v0.0.35",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-08-12T12:00:00Z",
+                "resolved_commit": "b" * 40,
+            },
+        ]
+        candidates = release_tool.select_candidates(
+            upstream,
+            self.downstream,
+            self.config,
+            limit=10,
+            requested_tag=None,
+            commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
+        )
+        self.assertEqual(
+            [candidate.tag for candidate in candidates],
+            ["v0.0.35", "v0.0.34", "v0.0.34-nightly.20260811.1063"],
+        )
+
+    def test_nightly_older_than_mirrored_nightly_is_never_scheduled(self) -> None:
+        downstream = [
+            *self.downstream,
+            {
+                "tag_name": "v0.0.34-nightly.20260811.1063",
+                "draft": False,
+                "published_at": "2026-08-11T05:00:00Z",
+            },
+            {"tag_name": "v0.0.34", "draft": False, "published_at": "2026-08-11T13:00:00Z"},
+        ]
+        candidates = release_tool.select_candidates(
+            self.upstream,
+            downstream,
+            self.config,
+            limit=10,
+            requested_tag=None,
+            commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
+        )
+        self.assertEqual(candidates, [])
+
+    def test_manual_tag_can_still_build_a_superseded_nightly(self) -> None:
+        candidates = release_tool.select_candidates(
+            self.upstream,
+            self.downstream,
+            self.config,
+            limit=1,
+            requested_tag="v0.0.34-nightly.20260810.1062",
+            commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
+        )
+        self.assertEqual(
+            [candidate.tag for candidate in candidates],
+            ["v0.0.34-nightly.20260810.1062"],
         )
 
     def test_ignores_unrelated_upstream_release_tags(self) -> None:
@@ -87,11 +141,7 @@ class ReleaseToolTests(unittest.TestCase):
         )
         self.assertEqual(
             [candidate.tag for candidate in candidates],
-            [
-                "v0.0.34-nightly.20260810.1062",
-                "v0.0.34-nightly.20260811.1063",
-                "v0.0.34",
-            ],
+            ["v0.0.34", "v0.0.34-nightly.20260811.1063"],
         )
 
     def test_configures_native_x64_and_arm64_runners(self) -> None:
@@ -149,7 +199,7 @@ class ReleaseToolTests(unittest.TestCase):
                 ["x64", "arm64"],
             )
 
-    def test_limit_keeps_oldest_unseen_release_first(self) -> None:
+    def test_limit_keeps_pending_stable_release_first(self) -> None:
         candidates = release_tool.select_candidates(
             self.upstream,
             self.downstream,
@@ -158,10 +208,7 @@ class ReleaseToolTests(unittest.TestCase):
             requested_tag=None,
             commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
         )
-        self.assertEqual(
-            [candidate.tag for candidate in candidates],
-            ["v0.0.34-nightly.20260810.1062"],
-        )
+        self.assertEqual([candidate.tag for candidate in candidates], ["v0.0.34"])
 
     def test_downstream_draft_does_not_mark_release_complete(self) -> None:
         downstream = [
@@ -180,10 +227,7 @@ class ReleaseToolTests(unittest.TestCase):
             requested_tag=None,
             commit_resolver=lambda _repository, _tag: self.fail("fixture commit was ignored"),
         )
-        self.assertEqual(
-            [candidate.tag for candidate in candidates],
-            ["v0.0.34-nightly.20260810.1062"],
-        )
+        self.assertEqual([candidate.tag for candidate in candidates], ["v0.0.34"])
 
     def test_manual_tag_must_be_inside_configured_history(self) -> None:
         with self.assertRaises(release_tool.MirrorError):
@@ -220,7 +264,7 @@ class ReleaseToolTests(unittest.TestCase):
             )
 
             manifest = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["schema"], 2)
+            self.assertEqual(manifest["schema"], 3)
             self.assertEqual(manifest["upstream"]["commit"], "b" * 40)
             self.assertEqual(manifest["package"]["architectures"], ["x64", "arm64"])
             self.assertEqual(

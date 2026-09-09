@@ -263,6 +263,40 @@ def architectures_from_config(config: dict[str, Any]) -> list[Architecture]:
     return architectures
 
 
+def prioritize_releases(
+    eligible: list[dict[str, Any]], existing_tags: set[Any], *, skip_superseded: bool
+) -> list[dict[str, Any]]:
+    """Order unmirrored releases so the most useful package is built first.
+
+    Every unmirrored stable release is kept, newest first, because stable users are
+    waiting for it. Nightlies are superseded quickly, so only the newest unmirrored
+    nightly that is newer than every already-mirrored nightly is kept. Stable releases
+    always precede nightlies.
+    """
+    stable = [
+        release
+        for release in reversed(eligible)
+        if classify_tag(release["tag_name"]) == "stable" and release["tag_name"] not in existing_tags
+    ]
+
+    nightlies = [release for release in eligible if classify_tag(release["tag_name"]) == "nightly"]
+    if skip_superseded:
+        last_mirrored = max(
+            (index for index, release in enumerate(nightlies) if release["tag_name"] in existing_tags),
+            default=-1,
+        )
+        pending = [
+            release
+            for release in nightlies[last_mirrored + 1 :]
+            if release["tag_name"] not in existing_tags
+        ]
+        nightlies = pending[-1:]
+    else:
+        nightlies = [release for release in nightlies if release["tag_name"] not in existing_tags]
+
+    return [*stable, *nightlies]
+
+
 def select_candidates(
     upstream_releases: list[dict[str, Any]],
     downstream_releases: list[dict[str, Any]],
@@ -291,10 +325,8 @@ def select_candidates(
     repository = config["upstream_repository"]
 
     candidates: list[Candidate] = []
-    for release in eligible:
+    for release in prioritize_releases(eligible, existing_tags, skip_superseded=not requested_tag):
         tag = release["tag_name"]
-        if tag in existing_tags:
-            continue
         commit = release.get("resolved_commit") or commit_resolver(repository, tag)
         if not isinstance(commit, str) or not SHA_PATTERN.fullmatch(commit):
             raise MirrorError(f"Unable to resolve immutable commit for {repository}@{tag}")
@@ -430,7 +462,7 @@ def manifest_command(args: argparse.Namespace) -> None:
         "+00:00", "Z"
     )
     payload = {
-        "schema": 2,
+        "schema": 3,
         "upstream": {
             "repository": args.upstream_repository,
             "tag": args.tag,
@@ -441,7 +473,6 @@ def manifest_command(args: argparse.Namespace) -> None:
             "version": args.version,
             "channel": args.channel,
             "architectures": args.arch,
-            "packaging_proposal": "https://github.com/pingdotgg/t3code/pull/5139",
         },
         "generated_at": generated_at,
         "artifacts": [

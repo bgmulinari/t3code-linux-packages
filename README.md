@@ -5,8 +5,9 @@ Unofficial `.deb` and `.rpm` packages for
 
 This repository exists to make upstream T3 Code releases installable and updatable through APT and
 DNF while upstream does not provide those package repositories. Its Debian and RPM packaging is
-based on [PR #5139](https://github.com/pingdotgg/t3code/pull/5139) by
-[`@bigpod98`](https://github.com/bigpod98), applied to official upstream release tags.
+carried as a local patch applied to official upstream release tags. The patch originated in
+[PR #5139](https://github.com/pingdotgg/t3code/pull/5139) by
+[`@bigpod98`](https://github.com/bigpod98), which upstream closed without merging.
 
 > [!IMPORTANT]
 > Choose either the **stable** or **nightly** channel. Do not enable both at the same time.

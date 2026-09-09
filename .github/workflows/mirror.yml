@@ -314,7 +314,6 @@ jobs:
             "- Upstream release: https://github.com/pingdotgg/t3code/releases/tag/$UPSTREAM_TAG" \
             "- Upstream commit: \`$UPSTREAM_COMMIT\`" \
             "- Channel: \`$PACKAGE_CHANNEL\`" \
-            "- Packaging proposal: https://github.com/pingdotgg/t3code/pull/5139" \
             > "$RUNNER_TEMP/release-notes.md"
 
       - name: Publish immutable mirror release
