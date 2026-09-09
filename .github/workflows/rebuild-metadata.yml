@@ -2,6 +2,17 @@ name: Rebuild package repository metadata
 
 on:
   workflow_dispatch:
+    inputs:
+      source:
+        description: >-
+          Rebuild from the retained signed state, or regenerate from scratch using the
+          packages in every published version release (drops entries for deleted releases)
+        required: false
+        default: state
+        type: choice
+        options:
+          - state
+          - releases
 
 permissions:
   contents: read
@@ -44,7 +55,12 @@ jobs:
           test -n "$fingerprint"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
 
+          public_key="$RUNNER_TEMP/package-signing-key.asc"
+          gpg --batch --armor --export "$fingerprint" > "$public_key"
+          rpm --import "$public_key"
+
       - name: Download and verify retained repository state
+        if: inputs.source != 'releases'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -63,6 +79,7 @@ jobs:
           test -d state-existing/repository
 
       - name: Rebuild retained metadata
+        if: inputs.source != 'releases'
         env:
           SIGNING_KEY: ${{ steps.signing-key.outputs.fingerprint }}
         run: |
@@ -76,6 +93,69 @@ jobs:
             --metadata-base-url "https://${GITHUB_REPOSITORY_OWNER}.github.io/$repository_name" \
             --signing-key "$SIGNING_KEY"
 
+      - name: Regenerate metadata from published version releases
+        if: inputs.source == 'releases'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ steps.signing-key.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          metadata_base_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/$repository_name"
+
+          mapfile -t version_tags < <(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft | not) | "\(.published_at) \(.tag_name)"' \
+              | grep -E ' v[0-9]+\.[0-9]+\.[0-9]+(-nightly\.[0-9]+\.[0-9]+)?$' \
+              | sort \
+              | awk '{ print $2 }'
+          )
+          test "${#version_tags[@]}" -gt 0
+
+          existing=""
+          step=0
+          for tag in "${version_tags[@]}"; do
+            channel="$(python3 scripts/release_tool.py classify "$tag" | python3 -c 'import json,sys; print(json.load(sys.stdin)["channel"])')"
+            packages="packages/$tag"
+            mkdir -p "$packages"
+            gh release download "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern '*.deb' \
+              --pattern '*.rpm' \
+              --dir "$packages"
+            scripts/validate-packages.sh \
+              --directory "$packages" \
+              --deb-arch amd64 \
+              --deb-arch arm64 \
+              --rpm-arch x86_64 \
+              --rpm-arch aarch64 \
+              --require-rpm-signature
+
+            step=$((step + 1))
+            output="rebuild/$step"
+            args=(
+              --packages "$packages"
+              --tag "$tag"
+              --channel "$channel"
+              --output "$output"
+              --release-repository "$GITHUB_REPOSITORY"
+              --metadata-base-url "$metadata_base_url"
+              --signing-key "$SIGNING_KEY"
+            )
+            if [[ -n "$existing" ]]; then
+              args+=(--existing "$existing")
+            fi
+            scripts/build-package-repositories.sh "${args[@]}"
+            rm -rf "$packages"
+            existing="$output"
+          done
+          mv "$existing" repository
+
+      - name: Package signed repository state
+        env:
+          SIGNING_KEY: ${{ steps.signing-key.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
           mkdir state-assets
           tar -czf state-assets/repository-metadata.tar.gz repository
           gpg --batch --yes --default-key "$SIGNING_KEY" --armor --detach-sign \

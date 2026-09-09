@@ -3,10 +3,10 @@
   "max_releases_per_run": 1,
   "channels": {
     "stable": {
-      "first_tag": "v0.0.33"
+      "first_tag": "v0.0.40"
     },
     "nightly": {
-      "first_tag": "v0.0.34-nightly.20260810.1062"
+      "first_tag": "v0.0.41-nightly.20260909.1439"
     }
   },
   "architectures": [

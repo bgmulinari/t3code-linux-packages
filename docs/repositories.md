@@ -79,3 +79,7 @@ GitHub Pages is the single bootstrap location for `KEY.gpg` and all `.sources` a
 The four fixed APT releases contain only their signed, architecture-specific indexes. The workflow
 signs and compresses this metadata-only directory into the rolling `repository-state` release.
 Historical package binaries are never copied into that state.
+
+The `Rebuild package repository metadata` workflow re-signs that state by default. Dispatching it
+with `source: releases` instead regenerates every index from scratch using the packages attached to
+the version releases that still exist, which is how entries for deleted releases are dropped.

@@ -17,6 +17,12 @@ import release_tool  # noqa: E402
 class ReleaseToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = release_tool.load_config(REPOSITORY_ROOT / "config/mirror.json")
+        # The fixtures model a fixed slice of upstream history independent of the
+        # production channel boundaries, which move forward over time.
+        self.config["channels"] = {
+            "stable": {"first_tag": "v0.0.33"},
+            "nightly": {"first_tag": "v0.0.34-nightly.20260810.1062"},
+        }
         self.upstream = release_tool.read_json(
             REPOSITORY_ROOT / "tests/fixtures/upstream-releases.json"
         )
@@ -176,9 +182,11 @@ class ReleaseToolTests(unittest.TestCase):
     def test_discovery_emits_one_release_and_two_builds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             github_output = Path(temporary_directory) / "github-output"
+            config_path = Path(temporary_directory) / "mirror.json"
+            config_path.write_text(json.dumps(self.config), encoding="utf-8")
             release_tool.discover_command(
                 argparse.Namespace(
-                    config=REPOSITORY_ROOT / "config/mirror.json",
+                    config=config_path,
                     upstream_file=REPOSITORY_ROOT / "tests/fixtures/upstream-releases.json",
                     downstream_file=REPOSITORY_ROOT / "tests/fixtures/downstream-releases.json",
                     downstream_repository=None,
